@@ -22,7 +22,7 @@ except ImportError as error:
 
 class MerlinGUI(GUIActions):
     
-    def __init__(self):
+    def __init__(self, args):
         # create root window
         tk.Tk.__init__(self)
         self.title('Merlinator')
@@ -173,6 +173,8 @@ class MerlinGUI(GUIActions):
         self.bind("<Control-e>", lambda event:self.export_playlist())
         self.bind("<Control-x>", lambda event:self.export_all_to_zip())
 
+        if args.playlist:
+            self.import_playlist(args.playlist)
 
         
     def make_main_tree(self, parent):
@@ -265,8 +267,9 @@ class MerlinGUI(GUIActions):
 
 
 
-    def import_playlist(self):
-        filepath = filedialog.askopenfilename(initialfile="playlist.bin", filetypes=[('tous types supportés', '*.bin;*.zip'), ('binaire', '*.bin'), ('fichier zip', '*.zip')])
+    def import_playlist(self, filepath = None):
+        if not filepath:
+            filepath = filedialog.askopenfilename(initialfile="playlist.bin", filetypes=[('tous types supportés', '*.bin;*.zip'), ('binaire', '*.bin'), ('fichier zip', '*.zip')])
         if not filepath:
             return
         
