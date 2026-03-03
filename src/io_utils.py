@@ -1,11 +1,10 @@
 # Copyright 2022 by Cyril Joder.
 # All rights reserved.
-# This file is part of merlinator, and is released under the 
+# This file is part of MerlinClaudinator (based on merlinator), and is released under the
 # "MIT License Agreement". Please see the LICENSE file
 # that should have been included as part of this package.
 
 
-from tkinter import Tk, filedialog, messagebox
 from PIL import Image
 from PIL.ImageTk import PhotoImage
 import zipfile
@@ -16,6 +15,9 @@ import io
 import hashlib
 import base64
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import mutagen for MP3 metadata extraction
 try:
@@ -25,9 +27,9 @@ try:
 except ImportError:
     MUTAGEN_AVAILABLE = False
 
+from constants import *
 
 bytezero = b'\x00'
-info = b"ChouetteRadio"
 
 
 def read_merlin_playlist(stream):
@@ -81,15 +83,15 @@ def read_merlin_playlist(stream):
         length = int.from_bytes(b, byteorder='little')
         b = stream.read(length)
         item['uuid'] = b.decode('UTF-8')
-        b = stream.read(64-length)
-        
+        b = stream.read(MAX_FILENAME_LENGTH - length)
+
         # titre
         b = stream.read(1)
         if not b: raise Exception("wrong file format")
         length = int.from_bytes(b, byteorder='little')
         b = stream.read(length)
         item['title'] = b.decode('UTF-8')
-        b = stream.read(66-length)
+        b = stream.read(MAX_TITLE_LENGTH - length)
         
         items.append(item)
     return items
@@ -138,15 +140,15 @@ def write_merlin_playlist(stream, items):
         length_b = length.to_bytes(1, byteorder='little')
         stream.write(length_b)
         stream.write(b)
-        stream.write(bytezero*(64-length))
-        
+        stream.write(bytezero * (MAX_FILENAME_LENGTH - length))
+
         # titre
         b = item['title'].encode('UTF-8')
         length = len(b)
         length_b = length.to_bytes(1, byteorder='little')
         stream.write(length_b)
         stream.write(b)
-        stream.write(bytezero*(66-length))
+        stream.write(bytezero * (MAX_TITLE_LENGTH - length))
     
 def format_item(item):
     for key in ("fav_order", "type", "limit_time", "add_time", "nb_children"):
@@ -161,7 +163,7 @@ def format_item(item):
 
 def export_merlin_to_zip(items, zfile):
     files_not_found = []
-    print(f"📦 Export vers ZIP - Nombre d'items: {len(items)}")
+    logger.info("Export vers ZIP - Nombre d'items: %d", len(items))
     for item in items:
         imagepath = item['imagepath']
         if imagepath:
@@ -172,7 +174,7 @@ def export_merlin_to_zip(items, zfile):
                     if os.path.exists(imagepath):
                         # Redimensionner et sauvegarder l'image avec un timestamp valide
                         with Image.open(imagepath) as image:
-                            image_icon = image.resize((128,128), Image.LANCZOS)
+                            image_icon = image.resize(IMAGE_SIZE, Image.LANCZOS)
                             # Sauvegarder dans un buffer temporaire
                             img_buffer = io.BytesIO()
                             image_icon.save(img_buffer, "JPEG", mode='RGB', optimize=False, progressive=False)
@@ -187,7 +189,7 @@ def export_merlin_to_zip(items, zfile):
                     try:
                         with zipfile.ZipFile(imagepath, "r") as zin:
                             with zfile.open(filename, "w") as fout:
-                                fout.write(zin.read(filename, pwd=info))
+                                fout.write(zin.read(filename, pwd=ZIP_PASSWORD))
                     except IOError:
                         files_not_found.append(item['uuid'] + '.jpg')
 
@@ -210,11 +212,11 @@ def export_merlin_to_zip(items, zfile):
                     try:
                         with zipfile.ZipFile(soundpath, "r") as zin:
                             with zfile.open(filename, "w") as fout:
-                                fout.write(zin.read(filename, pwd=info))
+                                fout.write(zin.read(filename, pwd=ZIP_PASSWORD))
                     except IOError:
                         files_not_found.append(filename)
-    
-    print("📝 Écriture de playlist.bin...")
+
+    logger.info("Écriture de playlist.bin...")
     try:
         # Créer playlist.bin dans un buffer avec timestamp valide
         playlist_buffer = io.BytesIO()
@@ -224,11 +226,9 @@ def export_merlin_to_zip(items, zfile):
         zip_info.date_time = time.localtime(time.time())[:6]
         zip_info.compress_type = zipfile.ZIP_DEFLATED
         zfile.writestr(zip_info, playlist_buffer.getvalue())
-        print("✓ playlist.bin créé avec succès")
+        logger.info("playlist.bin créé avec succès")
     except Exception as e:
-        print(f"❌ Erreur lors de la création de playlist.bin: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("Erreur lors de la création de playlist.bin: %s", e, exc_info=True)
     
     return files_not_found
         
@@ -238,8 +238,7 @@ def IsImageProgressive(stream):
     while True:
         blockStart = struct.unpack('B', stream.read(1))[0]
         if blockStart != 0xff:
-            raise ValueError('Invalid char code ' + blockStart + ' - not a JPEG file: ' + filename)
-            return False
+            raise ValueError(f'Invalid char code {blockStart} - not a JPEG file')
 
         blockType = struct.unpack('B', stream.read(1))[0]
         if blockType == 0xd8:   # Start Of Image
@@ -259,13 +258,13 @@ def IsImageProgressive(stream):
     return False
 
 
-def generate_file_hash(filepath, max_length=64):
+def generate_file_hash(filepath, max_length=MAX_FILENAME_LENGTH):
     """
     Génère un hash unique en base64 pour un fichier, compatible avec les systèmes de fichiers.
-    
+
     Args:
         filepath: Chemin vers le fichier
-        max_length: Longueur maximale du hash (64 octets pour Merlin)
+        max_length: Longueur maximale du hash (MAX_FILENAME_LENGTH octets pour Merlin)
         
     Returns:
         String hash en base64 (sans caractères problématiques)
@@ -332,14 +331,14 @@ def extract_and_resize_mp3_thumbnail(mp3_filepath, output_image_path):
         if image.mode not in ('RGB', 'L'):
             image = image.convert('RGB')
         
-        # Redimensionner à 128x128
-        image_resized = image.resize((128, 128), Image.LANCZOS)
+        # Redimensionner à IMAGE_SIZE
+        image_resized = image.resize(IMAGE_SIZE, Image.LANCZOS)
         
         # Sauvegarder au format JPEG baseline (non-progressif)
         image_resized.save(output_image_path, 'JPEG', quality=85, optimize=False, progressive=False)
         
         return True
-        
+
     except Exception as e:
-        print(f"Erreur lors de l'extraction de la vignette: {e}")
+        logger.error("Erreur lors de l'extraction de la vignette: %s", e)
         return False

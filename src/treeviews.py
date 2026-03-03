@@ -1,17 +1,23 @@
 # Copyright 2022 by Cyril Joder.
 # All rights reserved.
-# This file is part of merlinator, and is released under the 
+# This file is part of MerlinClaudinator (based on merlinator), and is released under the
 # "MIT License Agreement". Please see the LICENSE file
 # that should have been included as part of this package.
 
 
 import tkinter as tk
+from tkinter import filedialog
 from tkinter.ttk import Treeview
 from PIL import Image, ImageTk
 import os.path, shutil, uuid
-from time import time
+import time
+import logging
 
-from io_utils import *
+logger = logging.getLogger(__name__)
+
+from io_utils import IsImageProgressive, generate_file_hash, extract_and_resize_mp3_thumbnail, format_item
+from constants import MAX_FILENAME_LENGTH, IMAGE_THUMBNAIL_SIZE
+from image_utils import ImageProcessor, TreeHelpers
 
 
 
@@ -23,9 +29,11 @@ class MerlinTree(Treeview):
             self.rootGUI = parent
         else:
             self.rootGUI = root
-        
-        
-        self.bind('<Button-1>', self.rootGUI.mouseclick)
+
+        # Track currently hovered item for favorite star display
+        self._hovered_item = None
+
+        self.bind('<Button-1>', self.on_click)
         self.bind('<B1-Motion>', self.rootGUI.movemouse)
         self.bind("<ButtonRelease-1>", self.rootGUI.mouserelease)
         self.bind("<Control-Up>", self.moveUp)
@@ -35,10 +43,55 @@ class MerlinTree(Treeview):
         self.bind("<KeyRelease-Control_L>", self.enable_arrows)
         self.bind("<KeyPress-Control_R>", self.disable_arrows)
         self.bind("<KeyRelease-Control_R>", self.enable_arrows)
-        
+
         self.bind('<<TreeviewSelect>>', self.rootGUI.synchronise_selection)
-        
+
         self.bind('<Double-Button-1>', self.play_sound)
+
+        # Add motion tracking for hover effect on favorite stars
+        self.bind('<Motion>', self.on_motion)
+        self.bind('<Leave>', self.on_leave)
+
+    def on_motion(self, event):
+        """Handle mouse motion to show/hide favorite star on hover"""
+        item = self.identify_row(event.y)
+
+        # If hovering over a different item than before
+        if item != self._hovered_item:
+            # Clear the previous hovered item's star (if it wasn't a favorite)
+            if self._hovered_item and self.exists(self._hovered_item) and self.tag_has('sound', self._hovered_item):
+                if not self.tag_has('favorite', self._hovered_item):
+                    self.set(self._hovered_item, 'Favori', '')
+
+            # Set the new hovered item's star (if it's not already a favorite)
+            if item and self.exists(item) and self.tag_has('sound', item):
+                if not self.tag_has('favorite', item):
+                    self.set(item, 'Favori', '☆')
+
+            self._hovered_item = item
+
+    def on_leave(self, event):
+        """Handle mouse leaving the tree - clear hover star"""
+        if self._hovered_item and self.exists(self._hovered_item) and self.tag_has('sound', self._hovered_item):
+            if not self.tag_has('favorite', self._hovered_item):
+                self.set(self._hovered_item, 'Favori', '')
+        self._hovered_item = None
+
+    def on_click(self, event):
+        """Handle clicks - detect if clicking on Favori column to toggle favorite"""
+        region = self.identify_region(event.x, event.y)
+        if region == 'cell':
+            column = self.identify_column(event.x)
+            item = self.identify_row(event.y)
+
+            # Check if clicking on the Favori column (#1)
+            if column == '#1' and item and self.tag_has('sound', item):
+                # Toggle favorite on this item
+                self.toggleFavorite(item)
+                return 'break'  # Prevent further processing
+
+        # Otherwise, proceed with normal click handling (drag and drop)
+        self.rootGUI.mouseclick(event)
 
     def disable_arrows(self, *args):
         temp = self.bind_class('Treeview', '<Up>')
@@ -63,26 +116,35 @@ class MerlinTree(Treeview):
     def moveUp(self, *args):
         node = self.selection()
         if node:
-            self.move(node, self.parent(node), self.index(node)-1)
-            self.see(node)
-            self.rootGUI.sync_buttons_main()
-            self.rootGUI.sync_buttons_fav()
+            from undo_manager import MoveCommand
+            old_parent = self.parent(node)
+            old_index = self.index(node)
+            new_index = old_index - 1
+            self.rootGUI.undo_manager.execute(
+                MoveCommand(self.rootGUI, node, old_parent, old_index, old_parent, new_index)
+            )
             
     def moveDown(self, *args):
         node = self.selection()
         if node:
-            self.move(node, self.parent(node), self.index(node)+1)
-            self.see(node)
-            self.rootGUI.sync_buttons_main()
-            self.rootGUI.sync_buttons_fav()
+            from undo_manager import MoveCommand
+            old_parent = self.parent(node)
+            old_index = self.index(node)
+            new_index = old_index + 1
+            self.rootGUI.undo_manager.execute(
+                MoveCommand(self.rootGUI, node, old_parent, old_index, old_parent, new_index)
+            )
             
     def moveParentDir(self, *args):
         node = self.selection()
         if node and self.parent(node) != '':
-            self.move(node, self.parent(self.parent(node)), 'end')
-            self.see(node)
-            self.rootGUI.sync_buttons_main()
-            self.rootGUI.sync_buttons_fav()
+            from undo_manager import MoveCommand
+            old_parent = self.parent(node)
+            old_index = self.index(node)
+            new_parent = self.parent(old_parent)
+            self.rootGUI.undo_manager.execute(
+                MoveCommand(self.rootGUI, node, old_parent, old_index, new_parent, 'end')
+            )
 
     def get_ancestors(self, node):
         res = [node]
@@ -124,43 +186,34 @@ class MerlinMainTree(MerlinTree):
 
         self["columns"] = MerlinMainTree.COL
         self.column("#0", width=300)
-        self.column("Favori", width=20, minwidth=10, stretch=tk.NO)
-        # self.column("id", width=20, minwidth=10, stretch=tk.NO)
-        # self.column("parent_id", width=20, minwidth=10, stretch=tk.NO)
-        # self.column("order", width=20, minwidth=10, stretch=tk.NO)
-        # self.column("nb_children", width=20, minwidth=10, stretch=tk.NO)
-        # self.column("fav_order", width=20, minwidth=10, stretch=tk.NO)
-        # self.column("type", width=20, minwidth=10, stretch=tk.NO)
-        # self.column("limit_time", width=20, minwidth=10)
-        # self.column("add_time", width=20, minwidth=10)
-        # self.column("uuid", width=100, minwidth=50)
-        # self.column("title", width=100, minwidth=50)
+        self.column("Favori", width=40, minwidth=40, stretch=tk.NO, anchor='center')
         self["displaycolumns"]=["Favori"]
-        
-        # self.heading('#0',text='Nom', anchor=tk.W)
-        # for key in MerlinMainTree.COL:
-            # self.heading(key, text=key, anchor=tk.W)
-        
+
         self.tag_configure("directory", foreground="grey")
         
     
+    def clear_tree(self):
+        """Clear all items from the tree"""
+        self._hovered_item = None
+        for c in self.get_children():
+            self.delete(c)
+        if self.iid_Merlin_discover:
+            self.delete(self.iid_Merlin_discover)
+            self.iid_Merlin_discover = None
+        if self.iid_Merlin_favorite:
+            self.delete(self.iid_Merlin_favorite)
+            self.iid_Merlin_favorite = None
+
     def populate(self, items, thumbnails, overwrite):
         if overwrite:
             # clear existing data
-            for c in self.get_children():
-                self.delete(c)
-            if self.iid_Merlin_discover:
-                self.delete(self.iid_Merlin_discover)
-                self.iid_Merlin_discover = None
-            if self.iid_Merlin_favorite:
-                self.delete(self.iid_Merlin_favorite)
-                self.iid_Merlin_favorite = None
-        
+            self.clear_tree()
+
         mapiid = dict()
         mapiid[1] = ''
         offsets = dict()
         offsets[''] = len(self.get_children())
-        
+
         merge = False
         for item in (item for item in items if item['parent_id']==1):
             for c in self.get_children():
@@ -176,10 +229,11 @@ class MerlinMainTree(MerlinTree):
             answer = tk.messagebox.askyesno("Fusionner?",question)
             if not answer:
                 merge = False
-        
+
         # adding data
         for item in items:
-            favorite = '♥' if item['fav_order'] else ''
+            # Use star character for favorites: ★ for favorite, empty string for non-favorite (shows on hover)
+            favorite = '★' if item['fav_order'] else ''
             data = tuple([ favorite] + \
                 [item[key] for key in MerlinMainTree.COL[1:]])
             iid = item['id']
@@ -301,7 +355,10 @@ class MerlinMainTree(MerlinTree):
 
     def deleteNode(self, event=None, forceNode=None):
         if forceNode:
+            # Internal recursive call - direct deletion
             node = forceNode
+            if self._hovered_item == node:
+                self._hovered_item = None
             if (children:=self.get_children(node)):
                 for child in children:
                     self.deleteNode(event, child)
@@ -310,48 +367,50 @@ class MerlinMainTree(MerlinTree):
                 fav_tree.delete(node)
             self.delete(node)
         else:
+            # User-initiated deletion - use undo command
             node = self.selection()
-            if (event and event.widget in [self.rootGUI, self]) or \
-                event is None:
+            if (event and event.widget in [self.rootGUI, self]) or event is None:
                 if not node:
                     return
+
+                # Prepare confirmation dialog
                 if self.tag_has('directory', node):
-                    node_type = 'menu'  
+                    node_type = 'menu'
                 else:
                     node_type = 'fichier'
                 detail = ''
                 if node_type == 'menu' and self.get_children(node):
                     detail = " et tout ce qu'il contient"
                 question = f"Effacer le {node_type} '{self.item(node, 'text')[3:]}'{detail} ?"
-                answer = tk.messagebox.askyesno("Confirmation",question)
+                answer = tk.messagebox.askyesno("Confirmation", question)
+
                 if answer:
-                    self.deleteNode(event, node)
-                self.rootGUI.sync_buttons_main()
-                self.rootGUI.sync_buttons_fav()
+                    # Use undo command for user-initiated deletion
+                    from undo_manager import DeleteSubtreeCommand
+                    self.rootGUI.undo_manager.execute(
+                        DeleteSubtreeCommand(self.rootGUI, node)
+                    )
 
 
     def add_menu(self):
         current_node = self.selection()
-        iid = self.insert(self.parent(current_node), self.index(current_node)+1, text=' \u25AE Nouveau Menu', tags="directory")
-        
-        # Initialiser tous les champs nécessaires
-        self.set(iid, 'type', '6')
-        self.set(iid, 'add_time', str(int(time())))
-        self.set(iid, 'title', 'Nouveau Menu')
-        self.set(iid, 'uuid', str(uuid.uuid4()))
-        self.set(iid, 'fav_order', '0')
-        self.set(iid, 'limit_time', '0')
-        self.set(iid, 'id', '0')
-        self.set(iid, 'parent_id', '0')
-        self.set(iid, 'order', '0')
-        self.set(iid, 'nb_children', '0')
-        self.set(iid, 'imagepath', '')
-        self.set(iid, 'soundpath', '')
-        self.set(iid, 'Favori', '')
-        
-        self.focus(iid)
-        self.selection_set(iid)
-        self.update()
+        parent = self.parent(current_node)
+        index = self.index(current_node) + 1
+
+        # Prepare node data for undo command
+        node_data = {
+            'parent': parent,
+            'index': index,
+            'text': ' \u25AE Nouveau Menu',
+            'tags': ('directory',),
+            'values': ['', '', '', '0', '0', '0', '0', '0', '6', '0', str(int(time.time())), str(uuid.uuid4()), 'Nouveau Menu']
+        }
+
+        from undo_manager import AddNodeCommand
+        cmd = AddNodeCommand(self.rootGUI, node_data, is_sound=False)
+        self.rootGUI.undo_manager.execute(cmd)
+
+        # Focus on title entry for immediate editing
         self.rootGUI.title_entry.focus_set()
 
     def add_sound(self):
@@ -360,53 +419,56 @@ class MerlinMainTree(MerlinTree):
         filepaths = filedialog.askopenfilename(initialdir=playlist_dirname, filetypes=[('mp3', '*.mp3')], multiple=True)
         if not filepaths:
             return
-        for filepath in filepaths:
+
+        parent = self.parent(current_node)
+        base_index = self.index(current_node) + 1
+        sounds_data = []
+
+        # Prepare all sound data first
+        for idx, filepath in enumerate(filepaths):
             dirname, basename = os.path.split(filepath)
-            original_name = os.path.splitext(basename)[0]  # Nom original sans extension
-            
+            original_name = os.path.splitext(basename)[0]
+
             # Générer un hash unique basé sur le contenu du fichier
-            uuid = generate_file_hash(filepath, max_length=64)
-            
+            file_uuid = generate_file_hash(filepath, max_length=MAX_FILENAME_LENGTH)
+
             # Utiliser le nom original comme titre d'affichage
             display_title = original_name
-            
-            iid = self.insert(self.parent(current_node), self.index(current_node)+1, text=' \u266A ' + display_title, tags='sound')
-            
-            # Initialiser tous les champs nécessaires
-            self.set(iid, 'type', '4')
-            self.set(iid, 'soundpath', filepath)
-            self.set(iid, 'add_time', str(int(time())))
-            self.set(iid, 'uuid', uuid)
-            self.set(iid, 'title', display_title)
-            self.set(iid, 'fav_order', '0')
-            self.set(iid, 'limit_time', '0')
-            self.set(iid, 'id', '0')
-            self.set(iid, 'parent_id', '0')
-            self.set(iid, 'order', '0')
-            self.set(iid, 'nb_children', '0')
-            self.set(iid, 'Favori', '')
-            
+
             # Tenter d'extraire automatiquement la vignette du MP3
-            image_path = os.path.join(dirname, uuid + '.jpg')
+            image_path = os.path.join(dirname, file_uuid + '.jpg')
+            thumbnail_ref = ''
             if extract_and_resize_mp3_thumbnail(filepath, image_path):
                 # Charger la vignette dans l'interface
                 try:
-                    with Image.open(image_path) as img:
-                        image_small = img.resize((40, 40), Image.LANCZOS)
-                        self.rootGUI.thumbnails[uuid] = ImageTk.PhotoImage(image_small)
-                    self.item(iid, image=self.rootGUI.thumbnails[uuid])
-                    self.set(iid, 'imagepath', image_path)
-                    print(f"✓ Vignette extraite et associée à '{uuid}'")
+                    # Use ImageProcessor utility
+                    thumbnail = ImageProcessor.create_thumbnail_photoimage(image_path, IMAGE_THUMBNAIL_SIZE, check_progressive=False)
+                    if thumbnail:
+                        self.rootGUI.thumbnails[file_uuid] = thumbnail
+                    thumbnail_ref = self.rootGUI.thumbnails[file_uuid]
+                    logger.info("Vignette extraite et associée à '%s'", file_uuid)
                 except Exception as e:
-                    print(f"Erreur lors du chargement de la vignette: {e}")
+                    logger.error("Erreur lors du chargement de la vignette: %s", e)
+                    image_path = ''
             else:
-                # Pas de vignette trouvée, mettre une vignette vide
-                self.rootGUI.thumbnails[uuid] = ''
-                self.set(iid, 'imagepath', '')
-                
-        if len(filepaths)==1:
-            self.focus(iid)
-            self.selection_set(iid)
+                # Pas de vignette trouvée
+                self.rootGUI.thumbnails[file_uuid] = ''
+                image_path = ''
+
+            # Build sound data for command
+            sound_data = {
+                'parent': parent,
+                'index': base_index + idx,
+                'text': ' \u266A ' + display_title,
+                'tags': ('sound',),
+                'values': ['', image_path, filepath, '0', '0', '0', '0', '0', '4', '0', str(int(time.time())), file_uuid, display_title],
+                'image': thumbnail_ref
+            }
+            sounds_data.append(sound_data)
+
+        # Execute with undo support
+        from undo_manager import AddMultipleSoundsCommand
+        self.rootGUI.undo_manager.execute(AddMultipleSoundsCommand(self.rootGUI, sounds_data))
         self.update()
 
     def add_album(self):
@@ -444,6 +506,10 @@ class MerlinMainTree(MerlinTree):
             if not response:
                 return
         
+        # Capture state before adding albums (for undo)
+        from undo_manager import AddAlbumCommand
+        before_snapshot = self.rootGUI.undo_manager.create_tree_snapshot()
+
         # Ajouter chaque album
         total_tracks = 0
         last_album_iid = None
@@ -452,19 +518,26 @@ class MerlinMainTree(MerlinTree):
             total_tracks += tracks
             if album_iid:
                 last_album_iid = album_iid
-        
+
         # Ouvrir le menu parent pour voir les albums ajoutés
         if current_node and self.tag_has('directory', current_node):
             self.item(current_node, open=True)
-        
+
         # Sélectionner le dernier album ajouté
         if last_album_iid:
             self.focus(last_album_iid)
             self.selection_set(last_album_iid)
             self.see(last_album_iid)
-        
+
         self.update()
-        
+
+        # Capture state after and create undo command
+        after_snapshot = self.rootGUI.undo_manager.create_tree_snapshot()
+        cmd = AddAlbumCommand(self.rootGUI, current_node, albums_to_add)
+        cmd.before_snapshot = before_snapshot
+        cmd.after_snapshot = after_snapshot
+        self.rootGUI.undo_manager.push_without_execute(cmd)
+
         # Message de confirmation
         tk.messagebox.showinfo(
             "Albums ajoutés",
@@ -497,7 +570,7 @@ class MerlinMainTree(MerlinTree):
                         if has_mp3_sub:
                             albums.append(item_path)
                     except PermissionError:
-                        print(f"⚠️  Accès refusé à {item_path}")
+                        logger.warning("Accès refusé à %s", item_path)
                         continue
         
         return sorted(albums)
@@ -544,40 +617,40 @@ class MerlinMainTree(MerlinTree):
         
         # Lister tous les fichiers MP3 dans le dossier
         mp3_files = []
-        print(f"📂 Scan du dossier : {folder_path}")
+        logger.info("Scan du dossier : %s", folder_path)
         for filename in os.listdir(folder_path):
             if filename.lower().endswith('.mp3'):
                 full_path = os.path.join(folder_path, filename)
                 mp3_files.append(full_path)
-                print(f"  → MP3 trouvé : {filename}")
+                logger.debug("MP3 trouvé : %s", filename)
         
         # Trier par nom de fichier
         mp3_files.sort()
-        
-        print(f"📊 Total MP3 trouvés : {len(mp3_files)}")
+
+        logger.info("Total MP3 trouvés : %d", len(mp3_files))
         
         if not mp3_files:
-            print(f"⚠️  Aucun MP3 dans {folder_name}")
+            logger.warning("Aucun MP3 dans %s", folder_name)
             self.delete(menu_iid)
             return None, 0
         
         menu_image_path = None
-        
+
         # Ajouter chaque MP3 comme son dans le menu
-        print(f"🎵 Ajout des MP3 dans le menu '{folder_name}'...")
+        logger.info("Ajout des MP3 dans le menu '%s'...", folder_name)
         for idx, mp3_path in enumerate(mp3_files, 1):
             basename = os.path.basename(mp3_path)
             original_name = os.path.splitext(basename)[0]
-            
-            print(f"  [{idx}/{len(mp3_files)}] Traitement de '{original_name}'...")
+
+            logger.debug("[%d/%d] Traitement de '%s'...", idx, len(mp3_files), original_name)
             
             # Générer un hash unique
-            file_uuid = generate_file_hash(mp3_path, max_length=64)
-            print(f"    Hash généré : {file_uuid[:20]}...")
+            file_uuid = generate_file_hash(mp3_path, max_length=MAX_FILENAME_LENGTH)
+            logger.debug("Hash généré : %s...", file_uuid[:20])
             
             # Créer le son dans le menu
             sound_iid = self.insert(menu_iid, 'end', text=' \u266A ' + original_name, tags='sound')
-            print(f"    Son créé avec iid : {sound_iid}")
+            logger.debug("Son créé avec iid : %s", sound_iid)
             
             # Initialiser tous les champs
             self.set(sound_iid, 'type', '4')
@@ -597,19 +670,20 @@ class MerlinMainTree(MerlinTree):
             image_path = os.path.join(folder_path, file_uuid + '.jpg')
             if extract_and_resize_mp3_thumbnail(mp3_path, image_path):
                 try:
-                    with Image.open(image_path) as img:
-                        image_small = img.resize((40, 40), Image.LANCZOS)
-                        self.rootGUI.thumbnails[file_uuid] = ImageTk.PhotoImage(image_small)
+                    # Use ImageProcessor utility
+                    thumbnail = ImageProcessor.create_thumbnail_photoimage(image_path, IMAGE_THUMBNAIL_SIZE, check_progressive=False)
+                    if thumbnail:
+                        self.rootGUI.thumbnails[file_uuid] = thumbnail
                     self.item(sound_iid, image=self.rootGUI.thumbnails[file_uuid])
                     self.set(sound_iid, 'imagepath', image_path)
                     
                     # Utiliser la première vignette trouvée pour le menu
                     if menu_image_path is None:
                         menu_image_path = image_path
-                    
-                    print(f"✓ Vignette extraite pour '{original_name}'")
+
+                    logger.info("Vignette extraite pour '%s'", original_name)
                 except Exception as e:
-                    print(f"Erreur lors du chargement de la vignette: {e}")
+                    logger.error("Erreur lors du chargement de la vignette: %s", e)
                     self.rootGUI.thumbnails[file_uuid] = ''
                     self.set(sound_iid, 'imagepath', '')
             else:
@@ -619,20 +693,21 @@ class MerlinMainTree(MerlinTree):
         # Appliquer la première vignette au menu
         if menu_image_path:
             try:
-                with Image.open(menu_image_path) as img:
-                    image_small = img.resize((40, 40), Image.LANCZOS)
-                    self.rootGUI.thumbnails[menu_uuid] = ImageTk.PhotoImage(image_small)
-                self.item(menu_iid, image=self.rootGUI.thumbnails[menu_uuid])
-                self.set(menu_iid, 'imagepath', menu_image_path)
-                print(f"✓ Image du menu '{folder_name}' définie")
+                # Use ImageProcessor utility
+                thumbnail = ImageProcessor.create_thumbnail_photoimage(menu_image_path, IMAGE_THUMBNAIL_SIZE, check_progressive=False)
+                if thumbnail:
+                    self.rootGUI.thumbnails[menu_uuid] = thumbnail
+                    self.item(menu_iid, image=self.rootGUI.thumbnails[menu_uuid])
+                    self.set(menu_iid, 'imagepath', menu_image_path)
+                logger.info("Image du menu '%s' définie", folder_name)
             except Exception as e:
-                print(f"Erreur lors de la définition de l'image du menu: {e}")
+                logger.error("Erreur lors de la définition de l'image du menu: %s", e)
         
         # Ouvrir le menu pour voir son contenu
         self.item(menu_iid, open=True)
         self.update()
-        
-        print(f"✅ Album '{folder_name}' ajouté avec {len(mp3_files)} piste(s)")
+
+        logger.info("Album '%s' ajouté avec %d piste(s)", folder_name, len(mp3_files))
         return menu_iid, len(mp3_files)
 
     def select_image(self):
@@ -640,7 +715,13 @@ class MerlinMainTree(MerlinTree):
         playlist_dirname = os.path.dirname(self.rootGUI.playlistpath) if self.rootGUI.playlistpath else os.path.expanduser('~')
         if not current_node:
             return
-        uuid = self.set(current_node, 'uuid')
+
+        # Capture old state for undo
+        old_imagepath = self.set(current_node, 'imagepath')
+        old_uuid = self.set(current_node, 'uuid')
+        old_thumbnail = self.rootGUI.thumbnails.get(old_uuid, '')
+
+        uuid = old_uuid
         if uuid:
             initfile = uuid+'.jpg'
         else:
@@ -657,8 +738,8 @@ class MerlinMainTree(MerlinTree):
         if self.tag_has('directory', current_node):
             b = root.encode('UTF-8')
             new_filepath = filepath
-            while len(b)>64:
-                b = b[:65]
+            while len(b) > MAX_FILENAME_LENGTH:
+                b = b[:MAX_FILENAME_LENGTH + 1]
                 valid = False
                 while not valid:
                     b = b[:-1]
@@ -667,7 +748,7 @@ class MerlinMainTree(MerlinTree):
                         valid = root.startswith(new_root)
                     except UnicodeError:
                         pass
-                new_basename = newroot + ext
+                new_basename = new_root + ext
                 answer = tk.messagebox.askokcancel("Nom de fichier trop long", f"Le nom de fichier '{basename}' est trop long.\nLe copier sous un nouveau nom ?")
                 if not answer:
                     return
@@ -682,70 +763,46 @@ class MerlinMainTree(MerlinTree):
                 filepath = new_filepath                
                 shutil.copyfile(filepath, new_filepath)
             self.set(current_node, 'uuid', uuid)
-        
-        # if self.tag_has('directory', current_node):
-            # if dirname != playlist_dirname:
-                # answer = tk.messagebox.askyesnocancel("Copier Fichier?", "Copier le fichier dans le dossier de la playlist ?")
-                # if answer is None:
-                    # return
-                # elif answer:
-                    # new_filepath = os.path.join(playlist_dirname, basename)
-                    # if os.path.exists(new_filepath):
-                        # answer = tk.messagebox.askokcancel("Fichier existant", f"Le fichier {new_filepath} existe déjà. L'écraser ?")
-                        # if not answer:
-                            # return
-                    # with Image.open(filepath) as image:
-                        # image_thumbnail = image.resize((128,128), Image.LANCZOS)
-                        # image_thumbnail.save(new_filepath, "JPEG", mode='RGB')
-                    # filepath = new_filepath
-                    # dirname, basename = os.path.split(filepath)
-            # uuid, ext = os.path.splitext(basename)
-            # self.set(current_node, 'uuid', uuid)
-        # else:
-            # uuid = self.set(current_node, 'uuid')
-            # new_filepath = os.path.join(playlist_dirname, uuid + '.jpg')
-            # mismatch = False
-            # if dirname != playlist_dirname:
-                # mismatch = True
-                # answer = tk.messagebox.askyesnocancel("Copier Fichier?", "Copier le fichier image dans le dossier de la playlist ?")
-            # elif filepath != new_filepath:
-                # mismatch = True
-                # answer = tk.messagebox.askyesnocancel("Copier Fichier?", "Copier et renomer le fichier image ?")
-            # if mismatch:
-                # if answer is None:
-                    # return
-                # elif answer:
-                    # if os.path.exists(new_filepath):
-                        # answer = tk.messagebox.askokcancel("Fichier existant", "Le fichier existe déjà. L'écraser ?")
-                        # if not answer:
-                            # return
-                    # with Image.open(filepath) as image:
-                        # image_thumbnail = image.resize((128,128), Image.LANCZOS)
-                        # image_thumbnail.save(new_filepath, "JPEG", mode='RGB')
-                    # filepath = new_filepath
-                    # dirname, basename = os.path.split(filepath)
-                
-        with Image.open(filepath) as image:
-            image_small = image.resize((40, 40), Image.LANCZOS)
-            self.rootGUI.thumbnails[uuid] = ImageTk.PhotoImage(image_small)
-        
+
+        # Load new thumbnail using ImageProcessor utility
+        thumbnail = ImageProcessor.create_thumbnail_photoimage(filepath, IMAGE_THUMBNAIL_SIZE, check_progressive=True, gui=self.rootGUI)
+        if thumbnail:
+            self.rootGUI.thumbnails[uuid] = thumbnail
+
+        # Update tree view
+        new_imagepath = filepath
+        new_uuid = uuid
+
+        # Use undo command
+        from undo_manager import SelectImageCommand
+        cmd = SelectImageCommand(self.rootGUI, current_node, old_imagepath, new_imagepath,
+                                 old_uuid, new_uuid, old_thumbnail)
+        # Command needs to just update without re-executing since we already loaded the thumbnail
         self.item(current_node, image=self.rootGUI.thumbnails[uuid])
         self.set(current_node, 'imagepath', filepath)
+        self.rootGUI.undo_manager.push_without_execute(cmd)
+
         self.update()
-        
-    
-    
-    def toggleFavorite(self, *args):
-        node = self.selection()
-        if self.tag_has('favorite', node):
-            self.removeFromFavorite(node)
-        else:
-            self.addToFavorite(node)
-        
+
+        # Update the large thumbnail preview
+        self.rootGUI.update_thumbnail_preview()
+
+
+    def toggleFavorite(self, node=None, *args):
+        # If no node provided, use selection
+        if not node:
+            node = self.selection()
+        if node:
+            from undo_manager import ToggleFavoriteCommand
+            was_favorite = self.tag_has('favorite', node)
+            self.rootGUI.undo_manager.execute(
+                ToggleFavoriteCommand(self.rootGUI, node, was_favorite)
+            )
+
     def addToFavorite(self, node, index='end'):
         if node and self.tag_has('sound', node) and not self.tag_has('favorite', node):
             self.item(node, tags=('sound', 'favorite'))
-            self.set(node, 'Favori', '♥')
+            self.set(node, 'Favori', '★')  # Filled star for favorites
             self.rootGUI.fav_tree.insert('', index, iid=node, \
                                          text=self.item(node, 'text'), \
                                          image=self.item(node, 'image'))
@@ -754,12 +811,11 @@ class MerlinMainTree(MerlinTree):
             self.update()
             self.rootGUI.fav_tree.update()
             self.rootGUI.sync_buttons_fav()
-        
+
     def removeFromFavorite(self, node):
-        node = self.selection()
         if node and self.tag_has('sound', node):
             self.item(node, tags=('sound'))
-            self.set(node, 'Favori', '')
+            self.set(node, 'Favori', '')  # Clear star for non-favorites (will show on hover)
             self.rootGUI.fav_tree.delete(node)
             self.update()
             self.rootGUI.fav_tree.update()
@@ -776,17 +832,17 @@ class MerlinMainTree(MerlinTree):
     
 
 class MerlinFavTree(MerlinTree):
-    
+
     def __init__(self, parent, root=None):
         MerlinTree.__init__(self, parent, root)
-        
-    
+
+
     def populate(self, main_tree, overwrite):
         if overwrite:
             # clear existing data
             for c in self.get_children():
                 self.delete(c)
-        
+
         # add data
         nb_children = len(self.get_children())
         fav_list = sorted([(int(main_tree.set(node,'fav_order')), node) for node in main_tree.tag_has('favorite') if not self.exists(node)], reverse=True)
@@ -795,8 +851,88 @@ class MerlinFavTree(MerlinTree):
             self.insert('', order+nb_children, iid=node, text=main_tree.item(node, 'text'), \
                         image=main_tree.item(node, 'image'))
         self.update()
-    
-    
+
+    def _reorder_favorites(self, all_favs, node):
+        """Apply new fav_order values and push to undo stack.
+
+        Args:
+            all_favs: List of node IIDs in desired new order
+            node: The node being moved (for selection restoration)
+        """
+        from undo_manager import ReorderFavoritesCommand
+
+        # Capture old fav_order values before modification
+        old_fav_orders = {
+            fav_node: self.rootGUI.main_tree.set(fav_node, 'fav_order')
+            for fav_node in all_favs
+        }
+
+        # Recalculate ALL fav_order values based on new positions
+        # Higher index = lower fav_order (reversed, so first item has highest fav_order)
+        total_favs = len(all_favs)
+        for i, fav_node in enumerate(all_favs):
+            new_fav_order = total_favs - i
+            self.rootGUI.main_tree.set(fav_node, 'fav_order', str(new_fav_order))
+            self.rootGUI.main_tree.set(fav_node, 'Favori', '★')
+
+        # Capture new fav_order values after modification
+        new_fav_orders = {
+            fav_node: self.rootGUI.main_tree.set(fav_node, 'fav_order')
+            for fav_node in all_favs
+        }
+
+        # Push to undo stack
+        self.rootGUI.undo_manager.push_without_execute(
+            ReorderFavoritesCommand(self.rootGUI, old_fav_orders, new_fav_orders, node)
+        )
+
+        # Refresh favorite tree display
+        self.populate(self.rootGUI.main_tree, overwrite=True)
+
+        # Restore selection
+        self.selection_set(node)
+        self.see(node)
+
+        # Update button states
+        self.rootGUI.sync_buttons_fav()
+
+    def moveUp(self, *args):
+        """Override to only reorder favorites without affecting main tree structure"""
+        selection = self.selection()
+        if not selection:
+            return
+
+        node = selection[0] if isinstance(selection, tuple) else selection
+
+        index = self.index(node)
+        if index == 0:
+            return  # Already at top
+
+        all_favs = list(self.get_children(''))
+        all_favs.pop(index)
+        all_favs.insert(index - 1, node)
+
+        self._reorder_favorites(all_favs, node)
+
+    def moveDown(self, *args):
+        """Override to only reorder favorites without affecting main tree structure"""
+        selection = self.selection()
+        if not selection:
+            return
+
+        node = selection[0] if isinstance(selection, tuple) else selection
+
+        all_favs = list(self.get_children(''))
+        index = self.index(node)
+        if index >= len(all_favs) - 1:
+            return  # Already at bottom
+
+        all_favs.pop(index)
+        all_favs.insert(index + 1, node)
+
+        self._reorder_favorites(all_favs, node)
+
+
     def play_sound(self, event):
         if self.rootGUI.enable_audio:
             node = self.identify_row(event.y)

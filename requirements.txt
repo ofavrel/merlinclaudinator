@@ -1,4 +1,5 @@
 Pillow>=9.0.0
 mutagen>=1.45.0
+tkinterdnd2>=0.3.0  # Pour le drag-and-drop de fichiers
 # pygame>=2.0.0  # Optionnel - pour le support audio (peut ne pas fonctionner sur toutes les versions de macOS)
 

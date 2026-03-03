@@ -133,3 +133,6 @@ dmypy.json
 
 # Cursor
 .cursor/
+
+# Claude Code
+.claude/
