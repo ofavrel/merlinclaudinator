@@ -58,6 +58,7 @@ class AudioWidget(tk.Frame):
         self.sound_length = 0
         self.looping = False
         self.playing = False
+        self.pending_seek_position = 0  # Position to start from when Play is first called
 
         # Load icon images
         self._load_icons()
@@ -183,8 +184,9 @@ class AudioWidget(tk.Frame):
         if not self.sound_length:
             return
 
-        # Remember if we were playing
+        # Remember playback state before scrubbing
         self.was_playing_before_drag = self.start_time and not self.pause_time
+        self.had_started_before_drag = self.start_time != 0  # Track if music had ever started
         if self.was_playing_before_drag:
             self.Pause()
 
@@ -229,13 +231,20 @@ class AudioWidget(tk.Frame):
         click_ratio = max(0, min(1, event.x / canvas_width))
         new_position = click_ratio * self.sound_length
 
-        # Update playback position
-        self.start_time = time.time() - new_position
-        if self.was_playing_before_drag:
+        # Handle different states
+        if not self.had_started_before_drag:
+            # Music never started - just store seek position for when Play is called
+            self.pending_seek_position = new_position
+            # Don't modify start_time/pause_time - leave them at 0
+        elif self.was_playing_before_drag:
+            # Was playing - resume from new position
+            self.start_time = time.time() - new_position
             self.pause_time = 0  # Reset pause state since we're playing again
             mixer.music.play(start=new_position)
             self._set_button_icon(is_playing=True)  # Restore pause icon since still playing
         else:
+            # Was paused - update position but stay paused
+            self.start_time = time.time() - new_position
             self.pause_time = time.time()
 
         # Update display
@@ -289,6 +298,9 @@ class AudioWidget(tk.Frame):
                 current_time = self.pause_time - self.start_time
             else:
                 current_time = time.time() - self.start_time
+        elif self.pending_seek_position:
+            # Music hasn't started but user scrubbed to a position
+            current_time = self.pending_seek_position
         else:
             current_time = 0
         elapsed_time = time.strftime("%M:%S", time.gmtime(current_time))
@@ -320,6 +332,7 @@ class AudioWidget(tk.Frame):
 
         self.start_time = 0
         self.pause_time = 0
+        self.pending_seek_position = 0
         self.sound = None
         self.soundpath = None
         self.sound_from_zip = False
@@ -414,10 +427,15 @@ class AudioWidget(tk.Frame):
                 mixer.music.load(self.sound)
                 logger.debug("Starting playback...")
                 self.pause_time = 0
-                self.start_time = time.time()
-                mixer.music.play()
+
+                # Check if there's a pending seek position from scrubbing before play
+                start_position = self.pending_seek_position
+                self.pending_seek_position = 0  # Reset pending seek
+
+                self.start_time = time.time() - start_position
+                mixer.music.play(start=start_position)
                 self._set_button_icon(is_playing=True)  # Change to pause icon
-                logger.debug("Play completed successfully")
+                logger.debug("Play completed successfully at position %.2f", start_position)
             except Exception as e:
                 logger.error("Play failed: %s: %s", type(e).__name__, e, exc_info=True)
 
