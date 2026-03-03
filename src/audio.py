@@ -232,7 +232,9 @@ class AudioWidget(tk.Frame):
         # Update playback position
         self.start_time = time.time() - new_position
         if self.was_playing_before_drag:
+            self.pause_time = 0  # Reset pause state since we're playing again
             mixer.music.play(start=new_position)
+            self._set_button_icon(is_playing=True)  # Restore pause icon since still playing
         else:
             self.pause_time = time.time()
 
