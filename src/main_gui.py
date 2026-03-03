@@ -1009,12 +1009,16 @@ class MerlinGUI(GUIActions):
                 src = self.moveitem.get()
                 if dest_item and dest_item != src:
                     dest_type = t.set(dest_item, "type")
-                    # Only show zone feedback for folders
-                    if dest_type not in ['4', '36']:
-                        zone = self._get_drop_zone(t, event.y, dest_item)
-                        self._show_drop_feedback(t, dest_item, zone)
-                    else:
-                        self._clear_drop_feedback()
+                    is_sound = dest_type in ['4', '36']
+                    zone = self._get_drop_zone(t, event.y, dest_item)
+
+                    # For sounds, only allow top/bottom (insert before/after)
+                    # For folders, allow top/bottom/center (insert or drop into)
+                    if is_sound and zone == 'center':
+                        # Sounds can't contain other items, so treat center as bottom
+                        zone = 'bottom'
+
+                    self._show_drop_feedback(t, dest_item, zone)
                 else:
                     self._clear_drop_feedback()
             
