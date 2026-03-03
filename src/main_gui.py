@@ -1175,6 +1175,7 @@ class MerlinGUI(GUIActions):
             self.sync_buttons_main()
             self.sync_buttons_fav()
             self.clear_temp_variables()  # Clear drag state to prevent stale IID errors
+            self.after(100, self.load_visible_thumbnails)  # Refresh thumbnails
 
     def redo_action(self):
         """Perform redo operation"""
@@ -1184,6 +1185,7 @@ class MerlinGUI(GUIActions):
             self.sync_buttons_main()
             self.sync_buttons_fav()
             self.clear_temp_variables()  # Clear drag state to prevent stale IID errors
+            self.after(100, self.load_visible_thumbnails)  # Refresh thumbnails
 
     def update_undo_menu_state(self):
         """Update undo/redo menu item states and labels"""
