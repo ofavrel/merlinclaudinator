@@ -20,7 +20,7 @@ if ! command -v python3 &> /dev/null; then
     echo ""
     echo "Installez Python via Homebrew:"
     echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-    echo "  brew install python@3.11"
+    echo "  brew install python@3.11 python-tk@3.11"
     echo ""
     read -p "Appuyez sur Entrée pour fermer..."
     exit 1
@@ -29,30 +29,65 @@ fi
 PYTHON_VERSION=$(python3 --version)
 echo "✓ $PYTHON_VERSION"
 
-# Check if pip is available
-if ! python3 -m pip --version &> /dev/null; then
-    echo "❌ pip n'est pas installé."
-    echo "Installez pip: python3 -m ensurepip --upgrade"
-    read -p "Appuyez sur Entrée pour fermer..."
-    exit 1
-fi
-
-echo "✓ pip disponible"
-echo ""
-
-# Install/upgrade dependencies
-echo "Installation des dépendances..."
-python3 -m pip install --upgrade pip --quiet
-python3 -m pip install -r requirements.txt --quiet
-python3 -m pip install pyinstaller pygame --quiet
-
-# Check if tkinter is available
+# Check if tkinter is available BEFORE creating venv
 if ! python3 -c "import tkinter" &> /dev/null; then
     echo ""
     echo "⚠️  tkinter n'est pas disponible."
     echo ""
     echo "Installez-le via Homebrew:"
     echo "  brew install python-tk@3.11"
+    echo ""
+    echo "Si vous utilisez une autre version de Python, adaptez la commande:"
+    echo "  brew install python-tk@3.12"
+    echo "  brew install python-tk@3.13"
+    echo ""
+    read -p "Appuyez sur Entrée pour fermer..."
+    exit 1
+fi
+
+echo "✓ tkinter disponible"
+echo ""
+
+# Create virtual environment if it doesn't exist
+VENV_DIR=".venv"
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Création de l'environnement virtuel..."
+    python3 -m venv "$VENV_DIR"
+    if [ $? -ne 0 ]; then
+        echo "❌ Échec de la création de l'environnement virtuel"
+        read -p "Appuyez sur Entrée pour fermer..."
+        exit 1
+    fi
+    echo "✓ Environnement virtuel créé"
+else
+    echo "✓ Environnement virtuel existant trouvé"
+fi
+
+# Activate virtual environment
+echo "Activation de l'environnement virtuel..."
+source "$VENV_DIR/bin/activate"
+
+if [ $? -ne 0 ]; then
+    echo "❌ Échec de l'activation de l'environnement virtuel"
+    read -p "Appuyez sur Entrée pour fermer..."
+    exit 1
+fi
+
+echo "✓ Environnement virtuel activé"
+echo ""
+
+# Install/upgrade dependencies in venv
+echo "Installation des dépendances..."
+pip install --upgrade pip --quiet
+pip install -r requirements.txt --quiet
+pip install pyinstaller pygame --quiet
+
+if [ $? -ne 0 ]; then
+    echo "❌ Échec de l'installation des dépendances"
+    echo ""
+    echo "Essayez manuellement:"
+    echo "  source .venv/bin/activate"
+    echo "  pip install -r requirements.txt pyinstaller pygame"
     echo ""
     read -p "Appuyez sur Entrée pour fermer..."
     exit 1
@@ -64,7 +99,7 @@ echo ""
 # Run the build
 echo "Lancement du build..."
 echo ""
-python3 build_exe.py
+python build_exe.py
 
 # Check if build succeeded
 if [ -d "src/dist/MerlinClaudinator.app" ]; then
