@@ -1,5 +1,9 @@
 # MerlinClaudinator
 
+<img src="https://github.com/user-attachments/assets/ca754a33-69d1-4dea-bfc1-9208bb7d8a0d" width="458" /> 
+<img src="https://github.com/user-attachments/assets/1110c87f-6594-482c-9667-d396101e2fa4" width="400" />
+
+
 Editeur de playlist pour l'enceinte Merlin de La Chouette Radio (Bayard / Radio France).
 
 > **Note:** Version améliorée basée sur le [fork de pol51](https://github.com/pol51/merlinator) du projet original [merlinator](https://github.com/cyril-joder/merlinator) de Cyril Joder, avec des améliorations supplémentaires ajoutées avec l'assistance de Claude AI.
@@ -8,9 +12,10 @@ Editeur de playlist pour l'enceinte Merlin de La Chouette Radio (Bayard / Radio 
 
 ## Fonctionnalités
 
+- **Executable PC et Mac pour une utilisation simplifié ne necessitant pas d'installer Python et autres modules
 - **Annuler/Rétablir complet** - Ctrl+Z / Ctrl+Y pour toutes les opérations
 - **Glisser-déposer intuitif** - Retour visuel avec indicateurs de zone de dépôt
-- **Interface moderne** - Nouvelles icônes, mise en page simplifiée, grande prévisualisation des vignettes
+- **Interface Revisité** - Nouvelles icônes, mise en page simplifiée, grande prévisualisation des vignettes
 - **Clic pour favoris** - Basculer les favoris directement dans la playlist (icône étoile)
 - **Lecteur audio** - Barre de progression cliquable, bouton lecture/pause
 - **Glisser-déposer d'images** - Déposez des images directement sur la prévisualisation
@@ -21,7 +26,24 @@ Editeur de playlist pour l'enceinte Merlin de La Chouette Radio (Bayard / Radio 
 
 ---
 
-## Installation
+## Téléchargement (Utilisateurs)
+
+**Pas besoin d'installer Python !** Téléchargez simplement l'exécutable prêt à l'emploi :
+
+### Windows
+➡️ **[Télécharger MerlinClaudinator.exe](https://github.com/ofavrel/merlinclaudinator/releases/download/v1.0.0/MerlinClaudinator-v1.0.0-win.exe)**
+
+Double-cliquez sur le fichier pour lancer l'application.
+
+### macOS
+➡️ **[Télécharger MerlinClaudinator.app.zip](https://github.com/ofavrel/merlinclaudinator/releases/download/v1.0.0/MerlinClaudinator-v1.0.0-macos-arm64.zip)**
+
+1. Décompressez le fichier ZIP
+2. Glissez `MerlinClaudinator.app` dans le dossier Applications
+3. Au premier lancement : clic droit > Ouvrir (pour contourner Gatekeeper)
+---
+
+## Installation (Python)
 
 ### Prérequis
 
@@ -170,21 +192,6 @@ MerlinClaudinator gère ces conversions automatiquement pour les nouveaux fichie
 
 ---
 
-## Téléchargement (Utilisateurs)
-
-**Pas besoin d'installer Python !** Téléchargez simplement l'exécutable prêt à l'emploi :
-
-### Windows
-➡️ **[Télécharger MerlinClaudinator.exe](https://github.com/ofavrel/merlinclaudinator/releases/download/v1.0.0/MerlinClaudinator-v1.0.0-win.exe)**
-
-Double-cliquez sur le fichier pour lancer l'application.
-
-### macOS
-➡️ **[Télécharger MerlinClaudinator.app.zip](https://github.com/ofavrel/merlinclaudinator/releases/download/v1.0.0/MerlinClaudinator-v1.0.0-macos-arm64.zip)**
-
-1. Décompressez le fichier ZIP
-2. Glissez `MerlinClaudinator.app` dans le dossier Applications
-3. Au premier lancement : clic droit > Ouvrir (pour contourner Gatekeeper)
 
 ---
 
