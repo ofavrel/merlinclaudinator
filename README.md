@@ -175,12 +175,12 @@ MerlinClaudinator gère ces conversions automatiquement pour les nouveaux fichie
 **Pas besoin d'installer Python !** Téléchargez simplement l'exécutable prêt à l'emploi :
 
 ### Windows
-➡️ **[Télécharger MerlinClaudinator.exe](https://github.com/VOTRE_COMPTE/MerlinClaudinator/releases/latest)**
+➡️ **[Télécharger MerlinClaudinator.exe](https://github.com/ofavrel/merlinclaudinator/releases/download/v1.0.0/MerlinClaudinator-v1.0.0-win.exe)**
 
 Double-cliquez sur le fichier pour lancer l'application.
 
 ### macOS
-➡️ **[Télécharger MerlinClaudinator.app.zip](https://github.com/VOTRE_COMPTE/MerlinClaudinator/releases/latest)**
+➡️ **[Télécharger MerlinClaudinator.app.zip](https://github.com/ofavrel/merlinclaudinator/releases/download/v1.0.0/MerlinClaudinator-v1.0.0-macos-arm64.zip)**
 
 1. Décompressez le fichier ZIP
 2. Glissez `MerlinClaudinator.app` dans le dossier Applications
