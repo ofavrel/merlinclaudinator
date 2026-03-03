@@ -14,6 +14,7 @@ import zipfile
 import logging
 from pathlib import Path
 from PIL import Image, ImageTk, ImageEnhance
+from constants import get_src_path
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +120,9 @@ class AudioWidget(tk.Frame):
     def _load_icons(self):
         """Load play and pause icon images from src directory."""
         try:
-            src_dir = Path(__file__).parent
-            play_icon_path = src_dir / 'icons' / 'play_icon.png'
-            pause_icon_path = src_dir / 'icons' / 'pause_icon.png'
+            icons_dir = get_src_path('icons')
+            play_icon_path = icons_dir / 'play_icon.png'
+            pause_icon_path = icons_dir / 'pause_icon.png'
 
             # Load images
             play_img = Image.open(play_icon_path).convert('RGBA')

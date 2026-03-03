@@ -136,3 +136,23 @@ dmypy.json
 
 # Claude Code
 .claude/
+
+# =============================================================================
+# MerlinClaudinator specific
+# =============================================================================
+
+# PyInstaller build artifacts
+src/build/
+src/dist/
+*.spec
+
+# Application logs
+merlinclaudinator.log
+
+# macOS
+.DS_Store
+*.app/
+
+# Windows
+Thumbs.db
+desktop.ini

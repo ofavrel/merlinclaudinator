@@ -161,75 +161,133 @@ def format_item(item):
        
     
 
-def export_merlin_to_zip(items, zfile):
+def export_merlin_to_zip(items, zfile, progress_callback=None):
+    """
+    Export items to a ZIP file.
+
+    Args:
+        items: List of items to export
+        zfile: ZipFile object opened in write mode
+        progress_callback: Optional callback function(current, total, message) for progress updates
+
+    Returns:
+        List of files that were not found
+    """
     files_not_found = []
-    logger.info("Export vers ZIP - Nombre d'items: %d", len(items))
-    for item in items:
-        imagepath = item['imagepath']
+    written_files = set()  # Track files already written to avoid duplicates
+    total_items = len(items)
+    logger.info("Export vers ZIP - Nombre d'items: %d", total_items)
+
+    for idx, item in enumerate(items):
+        # Update progress
+        if progress_callback:
+            title = item.get('title', item.get('uuid', ''))[:30]
+            progress_callback(idx, total_items, f"Export: {title}")
+
+        # Export image
+        imagepath = item.get('imagepath', '')
         if imagepath:
             filename = item['uuid'] + '.jpg'
-            outfilezippath = zipfile.Path(zfile, at=filename)
-            if not outfilezippath.exists():
-                if imagepath[-4:] == '.jpg':
-                    if os.path.exists(imagepath):
-                        # Redimensionner et sauvegarder l'image avec un timestamp valide
-                        with Image.open(imagepath) as image:
-                            image_icon = image.resize(IMAGE_SIZE, Image.LANCZOS)
-                            # Sauvegarder dans un buffer temporaire
-                            img_buffer = io.BytesIO()
-                            image_icon.save(img_buffer, "JPEG", mode='RGB', optimize=False, progressive=False)
-                            # Créer ZipInfo avec timestamp valide
+            if filename not in written_files:
+                try:
+                    if imagepath.lower().endswith('.jpg') or imagepath.lower().endswith('.jpeg'):
+                        if os.path.exists(imagepath):
+                            logger.debug("Exporting image: %s -> %s", imagepath, filename)
+                            with Image.open(imagepath) as image:
+                                # Convert to RGB if necessary (handles RGBA, P, etc.)
+                                if image.mode != 'RGB':
+                                    image = image.convert('RGB')
+                                image_icon = image.resize(IMAGE_SIZE, Image.LANCZOS)
+                                img_buffer = io.BytesIO()
+                                image_icon.save(img_buffer, "JPEG", quality=85, optimize=False, progressive=False)
+                                zip_info = zipfile.ZipInfo(filename)
+                                zip_info.date_time = time.localtime(time.time())[:6]
+                                zip_info.compress_type = zipfile.ZIP_DEFLATED
+                                zfile.writestr(zip_info, img_buffer.getvalue())
+                                written_files.add(filename)
+                        else:
+                            logger.warning("Image file not found: %s", imagepath)
+                            files_not_found.append(imagepath)
+                    elif imagepath.lower().endswith('.zip'):
+                        # Read from ZIP archive
+                        try:
+                            with zipfile.ZipFile(imagepath, "r") as zin:
+                                data = zin.read(filename, pwd=ZIP_PASSWORD)
+                                zip_info = zipfile.ZipInfo(filename)
+                                zip_info.date_time = time.localtime(time.time())[:6]
+                                zip_info.compress_type = zipfile.ZIP_DEFLATED
+                                zfile.writestr(zip_info, data)
+                                written_files.add(filename)
+                        except (IOError, KeyError, zipfile.BadZipFile) as e:
+                            logger.warning("Failed to read image from ZIP %s: %s", imagepath, e)
+                            files_not_found.append(item['uuid'] + '.jpg')
+                    else:
+                        logger.warning("Unsupported image format: %s", imagepath)
+                        files_not_found.append(imagepath)
+                except Exception as e:
+                    logger.error("Error exporting image %s: %s", imagepath, e, exc_info=True)
+                    files_not_found.append(imagepath)
+
+        # Export sound
+        soundpath = item.get('soundpath', '')
+        if soundpath:
+            filename = item['uuid'] + '.mp3'
+            if filename not in written_files:
+                try:
+                    if soundpath.lower().endswith('.mp3'):
+                        if os.path.exists(soundpath):
+                            logger.debug("Exporting sound: %s -> %s", soundpath, filename)
                             zip_info = zipfile.ZipInfo(filename)
                             zip_info.date_time = time.localtime(time.time())[:6]
                             zip_info.compress_type = zipfile.ZIP_DEFLATED
-                            zfile.writestr(zip_info, img_buffer.getvalue())
+                            with open(soundpath, 'rb') as f:
+                                zfile.writestr(zip_info, f.read())
+                            written_files.add(filename)
+                        else:
+                            logger.warning("Sound file not found: %s", soundpath)
+                            files_not_found.append(soundpath)
+                    elif soundpath.lower().endswith('.zip'):
+                        # Read from ZIP archive
+                        try:
+                            with zipfile.ZipFile(soundpath, "r") as zin:
+                                data = zin.read(filename, pwd=ZIP_PASSWORD)
+                                zip_info = zipfile.ZipInfo(filename)
+                                zip_info.date_time = time.localtime(time.time())[:6]
+                                zip_info.compress_type = zipfile.ZIP_DEFLATED
+                                zfile.writestr(zip_info, data)
+                                written_files.add(filename)
+                        except (IOError, KeyError, zipfile.BadZipFile) as e:
+                            logger.warning("Failed to read sound from ZIP %s: %s", soundpath, e)
+                            files_not_found.append(filename)
                     else:
-                        files_not_found.append(imagepath)
-                else:
-                    try:
-                        with zipfile.ZipFile(imagepath, "r") as zin:
-                            with zfile.open(filename, "w") as fout:
-                                fout.write(zin.read(filename, pwd=ZIP_PASSWORD))
-                    except IOError:
-                        files_not_found.append(item['uuid'] + '.jpg')
-
-        soundpath = item['soundpath']
-        if soundpath:
-            filename = item['uuid'] + '.mp3'
-            outfilezippath = zipfile.Path(zfile, at=filename)
-            if not outfilezippath.exists():
-                if soundpath[-4:] == '.mp3':
-                    if os.path.exists(soundpath):
-                        # Créer un ZipInfo avec un timestamp valide (évite les erreurs de fichiers avec dates < 1980)
-                        zip_info = zipfile.ZipInfo(filename)
-                        zip_info.date_time = time.localtime(time.time())[:6]
-                        zip_info.compress_type = zipfile.ZIP_DEFLATED
-                        with open(soundpath, 'rb') as f:
-                            zfile.writestr(zip_info, f.read())
-                    else:
+                        logger.warning("Unsupported sound format: %s", soundpath)
                         files_not_found.append(soundpath)
-                else:
-                    try:
-                        with zipfile.ZipFile(soundpath, "r") as zin:
-                            with zfile.open(filename, "w") as fout:
-                                fout.write(zin.read(filename, pwd=ZIP_PASSWORD))
-                    except IOError:
-                        files_not_found.append(filename)
+                except Exception as e:
+                    logger.error("Error exporting sound %s: %s", soundpath, e, exc_info=True)
+                    files_not_found.append(soundpath)
 
+    # Write playlist.bin
     logger.info("Écriture de playlist.bin...")
+    if progress_callback:
+        progress_callback(total_items, total_items, "Création de playlist.bin...")
+
     try:
-        # Créer playlist.bin dans un buffer avec timestamp valide
         playlist_buffer = io.BytesIO()
         write_merlin_playlist(playlist_buffer, items)
-        # Créer ZipInfo avec timestamp valide
         zip_info = zipfile.ZipInfo("playlist.bin")
         zip_info.date_time = time.localtime(time.time())[:6]
         zip_info.compress_type = zipfile.ZIP_DEFLATED
         zfile.writestr(zip_info, playlist_buffer.getvalue())
-        logger.info("playlist.bin créé avec succès")
+        written_files.add("playlist.bin")
+        logger.info("playlist.bin créé avec succès (%d bytes)", len(playlist_buffer.getvalue()))
     except Exception as e:
         logger.error("Erreur lors de la création de playlist.bin: %s", e, exc_info=True)
-    
+        raise  # Re-raise to notify caller
+
+    if progress_callback:
+        progress_callback(total_items, total_items, "Export terminé!")
+
+    logger.info("Export terminé - %d fichiers écrits, %d fichiers non trouvés", len(written_files), len(files_not_found))
     return files_not_found
         
 

@@ -9,7 +9,33 @@ Constants used throughout the MerlinClaudinator application.
 Centralizes all magic numbers and configuration values for easy maintenance.
 """
 
+import sys
 from pathlib import Path
+
+
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        base_path = Path(sys._MEIPASS)
+    else:
+        # Running in development
+        base_path = Path(__file__).parent.parent
+    return base_path / relative_path
+
+
+def get_src_path(relative_path=""):
+    """Get path relative to src directory, works for dev and PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        base_path = Path(sys._MEIPASS)
+    else:
+        # Running in development
+        base_path = Path(__file__).parent
+    if relative_path:
+        return base_path / relative_path
+    return base_path
+
 
 # =============================================================================
 # File Format Constants
@@ -54,14 +80,14 @@ MAX_UNDO_STACK_SIZE = 50
 # File Paths
 # =============================================================================
 
-# Get the src directory path
-SRC_DIR = Path(__file__).parent
+# Get the src directory path (use function for PyInstaller compatibility)
+SRC_DIR = get_src_path()
 
 # Get the project root directory
-PROJECT_ROOT = SRC_DIR.parent
+PROJECT_ROOT = get_resource_path("")
 
 # Path to default pictures ZIP file
-DEFAULT_PICS_ZIP = PROJECT_ROOT / 'res' / 'defaultPics.zip'
+DEFAULT_PICS_ZIP = get_resource_path('res/defaultPics.zip')
 
 # =============================================================================
 # Audio Constants

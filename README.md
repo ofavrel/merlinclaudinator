@@ -170,6 +170,58 @@ MerlinClaudinator gère ces conversions automatiquement pour les nouveaux fichie
 
 ---
 
+## Téléchargement (Utilisateurs)
+
+**Pas besoin d'installer Python !** Téléchargez simplement l'exécutable prêt à l'emploi :
+
+### Windows
+➡️ **[Télécharger MerlinClaudinator.exe](https://github.com/VOTRE_COMPTE/MerlinClaudinator/releases/latest)**
+
+Double-cliquez sur le fichier pour lancer l'application.
+
+### macOS
+➡️ **[Télécharger MerlinClaudinator.app.zip](https://github.com/VOTRE_COMPTE/MerlinClaudinator/releases/latest)**
+
+1. Décompressez le fichier ZIP
+2. Glissez `MerlinClaudinator.app` dans le dossier Applications
+3. Au premier lancement : clic droit > Ouvrir (pour contourner Gatekeeper)
+
+---
+
+## Créer l'exécutable (Développeurs)
+
+### Build en un clic
+
+**Windows** : Double-cliquez sur `build_windows.bat`
+
+**macOS** : Double-cliquez sur `build_macos.command`
+- Si le script ne s'ouvre pas, exécutez d'abord : `chmod +x build_macos.command`
+
+Les scripts installent automatiquement les dépendances et créent l'exécutable.
+
+### Build manuel
+
+#### Windows
+
+```bash
+pip install pyinstaller pygame
+python build_exe.py
+```
+
+L'exécutable sera créé dans `src/dist/MerlinClaudinator.exe`.
+
+#### macOS
+
+```bash
+pip3 install pyinstaller pygame
+brew install python-tk@3.11  # si nécessaire
+python3 build_exe.py
+```
+
+L'application sera créée dans `src/dist/MerlinClaudinator.app`.
+
+---
+
 ## Documentation technique
 
 Pour les développeurs et contributeurs, voir [docs/TECHNICAL.md](docs/TECHNICAL.md) pour :

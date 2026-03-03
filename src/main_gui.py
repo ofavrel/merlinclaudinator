@@ -21,7 +21,7 @@ from gui_actions import GUIActions, TwoButtonCancelDialog, create_tooltip, DND_A
 from undo_manager import UndoManager
 from constants import (
     DEFAULT_PICS_ZIP, ZIP_PASSWORD, DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_POSITION,
-    MAX_UNDO_STACK_SIZE, IMAGE_THUMBNAIL_SIZE
+    MAX_UNDO_STACK_SIZE, IMAGE_THUMBNAIL_SIZE, get_src_path
 )
 from lazy_loader import LazyImageLoader
 from image_utils import ImageProcessor, TreeHelpers
@@ -238,8 +238,7 @@ class MerlinGUI(GUIActions):
         """Load icon images for edition and move buttons from src directory."""
         icons = {}
         try:
-            src_dir = Path(__file__).parent
-            icons_dir = src_dir / 'icons'
+            icons_dir = get_src_path('icons')
             icon_files = {
                 'new_folder': 'NewFolder.png',
                 'add_album': 'AddAlbum.png',
@@ -648,15 +647,201 @@ class MerlinGUI(GUIActions):
         if not t.get_children(''):
             return
         filepath = filedialog.asksaveasfilename(initialfile="merlin.zip", filetypes=[('archive zip', '*.zip')])
-        try:
-            with zipfile.ZipFile(filepath, 'w') as zfile:
-                items = self.main_tree.make_item_list()
-                files_not_found = export_merlin_to_zip(items, zfile)
-            if files_not_found:
-                message = "Les fichiers suivants n'ont pas été trouvés:\n" + "\n".join([f"- '{f}'" for f in files_not_found])
-                tk.messagebox.showwarning("Fichiers non trouvés", message)
-        except IOError:
-            tk.messagebox.showwarning("Erreur", "Fichier non accessible")
+        if not filepath:
+            # User cancelled the dialog
+            return
+
+        # Get items before starting export
+        items = self.main_tree.make_item_list()
+        if not items:
+            return
+
+        # Create progress dialog
+        progress_dialog = tk.Toplevel(self)
+        progress_dialog.title("Export en cours...")
+        progress_dialog.geometry("400x120")
+        progress_dialog.resizable(False, False)
+        progress_dialog.transient(self)
+        progress_dialog.grab_set()
+
+        # Center the dialog on parent window
+        self.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 400) // 2
+        y = self.winfo_y() + (self.winfo_height() - 120) // 2
+        progress_dialog.geometry(f"+{x}+{y}")
+
+        # Progress label
+        progress_label = tk.Label(progress_dialog, text="Préparation de l'export...", font=("Arial", 10))
+        progress_label.pack(pady=(15, 5))
+
+        # Progress bar
+        progress_bar = ttk.Progressbar(progress_dialog, length=350, mode='determinate')
+        progress_bar.pack(pady=5, padx=25)
+
+        # Percentage label
+        percent_label = tk.Label(progress_dialog, text="0%", font=("Arial", 9))
+        percent_label.pack(pady=5)
+
+        # Variables to track export state
+        export_result = {'files_not_found': [], 'error': None, 'done': False}
+
+        def update_progress(current, total, message):
+            """Callback to update progress bar from export function."""
+            if total > 0:
+                percentage = int((current / total) * 100)
+                progress_bar['value'] = percentage
+                percent_label.config(text=f"{percentage}%")
+            progress_label.config(text=message)
+            progress_dialog.update_idletasks()
+
+        def do_export():
+            """Run the export in the main thread with progress updates."""
+            try:
+                logger.info("Exporting archive to: %s", filepath)
+                with zipfile.ZipFile(filepath, 'w', compression=zipfile.ZIP_DEFLATED) as zfile:
+                    logger.info("Number of items to export: %d", len(items))
+                    export_result['files_not_found'] = export_merlin_to_zip(items, zfile, update_progress)
+                logger.info("Archive export completed successfully")
+            except PermissionError as e:
+                logger.error("Permission denied when creating archive: %s", e)
+                export_result['error'] = f"Permission refusée pour créer le fichier:\n{filepath}"
+            except OSError as e:
+                logger.error("OS error when creating archive: %s", e)
+                export_result['error'] = f"Erreur système:\n{e}"
+            except Exception as e:
+                logger.error("Unexpected error during archive export: %s", e, exc_info=True)
+                export_result['error'] = f"Erreur inattendue:\n{type(e).__name__}: {e}"
+            finally:
+                export_result['done'] = True
+
+        def run_export_with_updates():
+            """Run export and process events to keep UI responsive."""
+            # Use after_idle to start export and allow UI updates
+            import threading
+
+            def export_thread():
+                try:
+                    logger.info("Exporting archive to: %s", filepath)
+                    with zipfile.ZipFile(filepath, 'w', compression=zipfile.ZIP_DEFLATED) as zfile:
+                        logger.info("Number of items to export: %d", len(items))
+                        # Export synchronously but with progress callbacks
+                        for idx, item in enumerate(items):
+                            # Update progress in main thread
+                            title = item.get('title', item.get('uuid', ''))[:30]
+                            self.after(0, lambda i=idx, t=title: update_progress(i, len(items), f"Export: {t}"))
+
+                            # Export this item's image
+                            self._export_single_item_to_zip(item, zfile, export_result)
+
+                        # Write playlist.bin
+                        self.after(0, lambda: update_progress(len(items), len(items), "Création de playlist.bin..."))
+                        self._write_playlist_to_zip(items, zfile)
+
+                    logger.info("Archive export completed successfully")
+                except Exception as e:
+                    logger.error("Export error: %s", e, exc_info=True)
+                    export_result['error'] = str(e)
+                finally:
+                    export_result['done'] = True
+                    self.after(0, finish_export)
+
+            def finish_export():
+                progress_dialog.destroy()
+                if export_result['error']:
+                    tk.messagebox.showerror("Erreur", export_result['error'])
+                elif export_result['files_not_found']:
+                    files = export_result['files_not_found'][:20]  # Limit to 20 files in message
+                    message = "Les fichiers suivants n'ont pas été trouvés:\n" + "\n".join([f"- '{f}'" for f in files])
+                    if len(export_result['files_not_found']) > 20:
+                        message += f"\n... et {len(export_result['files_not_found']) - 20} autres fichiers"
+                    tk.messagebox.showwarning("Fichiers non trouvés", message)
+                else:
+                    tk.messagebox.showinfo("Export réussi", f"Archive créée avec succès:\n{filepath}")
+
+            # Start export in background thread
+            thread = threading.Thread(target=export_thread, daemon=True)
+            thread.start()
+
+        # Start the export process
+        self.after(100, run_export_with_updates)
+
+    def _export_single_item_to_zip(self, item, zfile, result):
+        """Export a single item (image and sound) to the ZIP file."""
+        import io
+        import time
+        from constants import IMAGE_SIZE, ZIP_PASSWORD
+
+        # Export image
+        imagepath = item.get('imagepath', '')
+        if imagepath:
+            filename = item['uuid'] + '.jpg'
+            try:
+                if imagepath.lower().endswith('.jpg') or imagepath.lower().endswith('.jpeg'):
+                    if os.path.exists(imagepath):
+                        with Image.open(imagepath) as image:
+                            if image.mode != 'RGB':
+                                image = image.convert('RGB')
+                            image_icon = image.resize(IMAGE_SIZE, Image.LANCZOS)
+                            img_buffer = io.BytesIO()
+                            image_icon.save(img_buffer, "JPEG", quality=85, optimize=False, progressive=False)
+                            zip_info = zipfile.ZipInfo(filename)
+                            zip_info.date_time = time.localtime(time.time())[:6]
+                            zip_info.compress_type = zipfile.ZIP_DEFLATED
+                            zfile.writestr(zip_info, img_buffer.getvalue())
+                    else:
+                        result['files_not_found'].append(imagepath)
+                elif imagepath.lower().endswith('.zip'):
+                    try:
+                        with zipfile.ZipFile(imagepath, "r") as zin:
+                            data = zin.read(filename, pwd=ZIP_PASSWORD)
+                            zip_info = zipfile.ZipInfo(filename)
+                            zip_info.date_time = time.localtime(time.time())[:6]
+                            zip_info.compress_type = zipfile.ZIP_DEFLATED
+                            zfile.writestr(zip_info, data)
+                    except (IOError, KeyError, zipfile.BadZipFile):
+                        result['files_not_found'].append(item['uuid'] + '.jpg')
+            except Exception as e:
+                logger.error("Error exporting image %s: %s", imagepath, e)
+                result['files_not_found'].append(imagepath)
+
+        # Export sound
+        soundpath = item.get('soundpath', '')
+        if soundpath:
+            filename = item['uuid'] + '.mp3'
+            try:
+                if soundpath.lower().endswith('.mp3'):
+                    if os.path.exists(soundpath):
+                        zip_info = zipfile.ZipInfo(filename)
+                        zip_info.date_time = time.localtime(time.time())[:6]
+                        zip_info.compress_type = zipfile.ZIP_DEFLATED
+                        with open(soundpath, 'rb') as f:
+                            zfile.writestr(zip_info, f.read())
+                    else:
+                        result['files_not_found'].append(soundpath)
+                elif soundpath.lower().endswith('.zip'):
+                    try:
+                        with zipfile.ZipFile(soundpath, "r") as zin:
+                            data = zin.read(filename, pwd=ZIP_PASSWORD)
+                            zip_info = zipfile.ZipInfo(filename)
+                            zip_info.date_time = time.localtime(time.time())[:6]
+                            zip_info.compress_type = zipfile.ZIP_DEFLATED
+                            zfile.writestr(zip_info, data)
+                    except (IOError, KeyError, zipfile.BadZipFile):
+                        result['files_not_found'].append(filename)
+            except Exception as e:
+                logger.error("Error exporting sound %s: %s", soundpath, e)
+                result['files_not_found'].append(soundpath)
+
+    def _write_playlist_to_zip(self, items, zfile):
+        """Write playlist.bin to the ZIP file."""
+        import io
+        import time
+        playlist_buffer = io.BytesIO()
+        write_merlin_playlist(playlist_buffer, items)
+        zip_info = zipfile.ZipInfo("playlist.bin")
+        zip_info.date_time = time.localtime(time.time())[:6]
+        zip_info.compress_type = zipfile.ZIP_DEFLATED
+        zfile.writestr(zip_info, playlist_buffer.getvalue())
         
     def new_session(self):
         items = MerlinMainTree.defaultItems
