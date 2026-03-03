@@ -1,6 +1,6 @@
 # MerlinClaudinator
 
-<img src="https://github.com/user-attachments/assets/ca754a33-69d1-4dea-bfc1-9208bb7d8a0d" width="458" /> 
+<img src="https://github.com/user-attachments/assets/ca754a33-69d1-4dea-bfc1-9208bb7d8a0d" width="400" /> 
 <img src="https://github.com/user-attachments/assets/1110c87f-6594-482c-9667-d396101e2fa4" width="400" />
 
 
